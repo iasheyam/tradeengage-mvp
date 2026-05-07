@@ -3,7 +3,12 @@
     "allow": [
       "Read(//Users/iasheyam/codes/**)",
       "Bash(npx create-next-app@latest tradeEngage-MVP --typescript --tailwind --eslint --app --no-src-dir --import-alias \"@/*\")",
-      "Bash(npx create-next-app@latest tradeengage-mvp --typescript --tailwind --eslint --app --no-src-dir --import-alias \"@/*\")"
+      "Bash(npx create-next-app@latest tradeengage-mvp --typescript --tailwind --eslint --app --no-src-dir --import-alias \"@/*\")",
+      "Bash(mkdir -p /Users/iasheyam/codes/tradeengage-mvp/components)",
+      "Bash(mkdir -p /Users/iasheyam/codes/tradeengage-mvp/app/discovery /Users/iasheyam/codes/tradeengage-mvp/app/communities /Users/iasheyam/codes/tradeengage-mvp/app/drafts /Users/iasheyam/codes/tradeengage-mvp/app/export)",
+      "Bash(npm run *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/discovery)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/communities)"
     ]
   }
 }
