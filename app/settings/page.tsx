@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { loadProfile, saveProfile } from "@/lib/communities-loader";
 
 const TRADE_VERTICALS = [
   "HVAC",
@@ -59,9 +60,23 @@ export default function SettingsPage() {
     bio: "Residential and light commercial HVAC serving the greater Atlanta metro area for 8+ years. Specializing in heat pump installs and system replacements.",
     website: "buckheadhvac.com",
     phone: "(404) 555-0182",
+    referralLink: "",
   });
 
   const [saveState, setSaveState] = useState<SaveState>("idle");
+
+  useEffect(() => {
+    loadProfile().then((profile) => {
+      if (profile) {
+        setForm((prev) => ({
+          ...prev,
+          trade: profile.trade ?? prev.trade,
+          market: profile.location ?? prev.market,
+          referralLink: profile.referralLink ?? prev.referralLink,
+        }));
+      }
+    });
+  }, []);
 
   function update(field: string, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -70,7 +85,7 @@ export default function SettingsPage() {
 
   async function save() {
     setSaveState("saving");
-    await new Promise((r) => setTimeout(r, 900));
+    await saveProfile({ trade: form.trade, location: form.market, referralLink: form.referralLink || undefined });
     setSaveState("saved");
     setTimeout(() => setSaveState("idle"), 3000);
   }
@@ -200,25 +215,21 @@ export default function SettingsPage() {
       {/* Referral Link */}
       <Section
         title="Referral Link"
-        description="Your unique TradeEngage referral link, embedded in homeowner post drafts."
+        description="Your referral or website link. When included in generated posts, UTM parameters are appended automatically per community."
       >
-        <Field label="Your Referral URL">
-          <div className="flex gap-2">
+        <Field
+          label="Your Referral URL"
+          hint="UTM parameters (utm_source, utm_medium, utm_campaign) are appended automatically when included in post drafts."
+        >
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden focus-within:ring-2 focus-within:ring-blue-500">
+            <span className="flex items-center px-3 bg-gray-50 text-xs text-gray-400 border-r border-gray-200 shrink-0">https://</span>
             <input
-              className={`${inputClass} flex-1 bg-gray-50 text-gray-500 cursor-default`}
-              value="tradeengage.com/ref/alex-johnson-hvac"
-              readOnly
+              className="flex-1 px-3 py-2 text-sm bg-white text-gray-900 placeholder-gray-400 focus:outline-none"
+              value={form.referralLink}
+              placeholder="tradeengage.com/ref/your-name"
+              onChange={(e) => update("referralLink", e.target.value)}
             />
-            <button
-              onClick={() => navigator.clipboard.writeText("https://tradeengage.com/ref/alex-johnson-hvac")}
-              className="px-3.5 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors shrink-0"
-            >
-              Copy
-            </button>
           </div>
-          <p className="text-xs text-gray-400 mt-1.5">
-            UTM parameters are appended automatically per community when drafts are generated.
-          </p>
         </Field>
       </Section>
 

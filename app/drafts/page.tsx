@@ -1,11 +1,40 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import Link from "next/link";
+import {
+  loadStatuses, saveDraftsForCommunity, getDraftsForCommunity,
+  getHistoryForCommunity, upsertHistoryItem, clearHistoryForCommunity,
+  type PostedHistoryItem, type PostStatus,
+} from "@/lib/community-status";
+import { loadProfile } from "@/lib/communities-loader";
+import type { GenerateResponse } from "@/app/api/drafts/generate/route";
+import type { ModifyResponse } from "@/app/api/drafts/modify/route";
+import {
+  getPostsForGroup, savePostsForGroup,
+  getRunForGroup, saveRunForGroup, clearRunForGroup,
+} from "@/lib/fb-group-posts";
+import {
+  getPostsForSubreddit, savePostsForSubreddit,
+  getRunForSubreddit, saveRunForSubreddit, clearRunForSubreddit,
+} from "@/lib/reddit-posts";
 
 type Platform = "facebook" | "reddit";
 type CommunityType = "contractor" | "homeowner";
-type ComplianceStatus = "clean" | "review" | "flagged";
-type PostType = "introduction" | "value" | "engagement" | "referral";
+type ComplianceStatus = "clean" | "review";
+type PostType = "introduction" | "value" | "engagement";
+type ActiveTab = "compose" | "history" | "inspirations";
+
+interface InspirationPost {
+  id: string;
+  url: string;
+  title?: string;
+  text: string;
+  time: string;
+  authorName: string;
+  likesCount: number;
+  commentsCount: number;
+}
 
 interface Draft {
   type: PostType;
@@ -15,184 +44,56 @@ interface Draft {
   complianceNote?: string;
 }
 
-interface SelectedCommunity {
+interface DraftCommunity {
   id: string;
   name: string;
+  description: string;
   platform: Platform;
   type: CommunityType;
-  postingRules: string;
+  status: "joined" | "pending";
+  url: string;
   drafts: Draft[];
+  hasGeneratedDrafts: boolean;
 }
 
-const SELECTED_COMMUNITIES: SelectedCommunity[] = [
+type HistoryItem = PostedHistoryItem;
+
+const POST_TYPE_META: Record<PostType, { label: string; color: string }> = {
+  introduction: { label: "Introduction", color: "bg-indigo-100 text-indigo-700" },
+  value:        { label: "Value Post",   color: "bg-emerald-100 text-emerald-700" },
+  engagement:   { label: "Engagement",  color: "bg-amber-100 text-amber-700" },
+};
+
+const PLACEHOLDER_DRAFTS: Draft[] = [
   {
-    id: "c1",
-    name: "Atlanta HVAC Professionals",
-    platform: "facebook",
-    type: "contractor",
-    postingRules: "No spam. Introduce yourself first.",
-    drafts: [
-      {
-        type: "introduction",
-        label: "Introduction",
-        compliance: "clean",
-        content: `Hey everyone! I'm reaching out from a local HVAC company based in Buckhead, Atlanta. We've been serving the metro area for 8+ years — residential and light commercial systems.
-
-I'm looking to connect with other trades (plumbers, electricians, roofers) to build a solid referral network. We use TradeEngage to manage and track referrals, which makes paying out referral fees simple and transparent.
-
-If you're open to trading referrals with a reliable HVAC company, drop a comment or send me a DM. Happy to connect!`,
-      },
-      {
-        type: "value",
-        label: "Value Post",
-        compliance: "clean",
-        content: `Quick field tip for fellow HVAC techs in the Atlanta market:
-
-Before replacing a compressor on a short-cycling unit, always verify refrigerant charge first. In my experience, ~80% of short-cycling calls in older systems are caused by an undercharge tripping the high-pressure cutoff — not a failed compressor.
-
-Saved a customer $2,400 last week by catching this before ordering parts.
-
-What's the most common misdiagnosis you see on service calls? Would love to hear what the Atlanta market is dealing with this season.`,
-      },
-      {
-        type: "engagement",
-        label: "Engagement",
-        compliance: "clean",
-        content: `Question for the group — how are you handling lead generation heading into summer?
-
-We're deciding between doubling down on maintenance contract renewals vs. pushing harder on new installs while demand is high. Trying to figure out what's working for other Atlanta HVAC companies right now.
-
-Also curious: are any of you using referral networks with other trades to stay busy in shoulder season? Would love to compare notes.`,
-      },
-    ],
+    type: "introduction",
+    label: "Introduction",
+    compliance: "clean",
+    content: `Draft generation is coming soon. Once available, your introduction post will be personalized based on your company profile, this community's focus, and current best practices for engagement.`,
   },
   {
-    id: "c5",
-    name: "r/HVAC",
-    platform: "reddit",
-    type: "contractor",
-    postingRules: "No self-promo without context. Flair required.",
-    drafts: [
-      {
-        type: "introduction",
-        label: "Introduction",
-        compliance: "review",
-        complianceNote: "r/HVAC discourages direct self-promotion in introductory posts. Lead with a question or shared experience before mentioning your business.",
-        content: `Been lurking here for a while and finally making an account to engage more. Run a small HVAC operation in Atlanta — mostly residential, some light commercial.
-
-Curious how other techs in warm-climate markets are handling the shift to heat pump installs. We're seeing more homeowners ask about them but the upfront cost objection is brutal in our market.
-
-Anyone figured out a good way to frame the ROI conversation, especially with Georgia Power rates?`,
-      },
-      {
-        type: "value",
-        label: "Value Post",
-        compliance: "clean",
-        content: `TIL: Atlanta's new building code (adopted Jan 2025) requires ACCA Manual J load calculations for all replacement installs over 5 tons — not just new construction.
-
-Had an inspector flag a straight swap on a 6-ton commercial unit last month. Worth double-checking if you're doing any larger replacements in Fulton or DeKalb counties.
-
-Anyone else run into this yet? Happy to share the specific code section if useful.`,
-      },
-      {
-        type: "engagement",
-        label: "Engagement",
-        compliance: "clean",
-        content: `For Atlanta-area HVAC folks: what's your go-to approach for the "my unit is 12 years old, should I repair or replace?" conversation?
-
-I've been using a rough rule of thumb — if repair cost exceeds 50% of a new unit's price AND efficiency delta is >30%, push for replacement. But curious if anyone has a better framework, especially with refrigerant transition costs now in the mix.`,
-      },
-    ],
+    type: "value",
+    label: "Value Post",
+    compliance: "clean",
+    content: `Draft generation is coming soon. Your value post will be tailored to provide genuinely useful content for this community — no promotional language, just helpful insight relevant to the group's audience.`,
   },
   {
-    id: "h2",
-    name: "Buckhead Neighbors",
-    platform: "facebook",
-    type: "homeowner",
-    postingRules: "Local residents only. No promotional posts.",
-    drafts: [
-      {
-        type: "introduction",
-        label: "Introduction",
-        compliance: "review",
-        complianceNote: "This group restricts promotional posts. Avoid mentioning your company name or services directly. Lead with neighborhood context.",
-        content: `Hi neighbors! Long-time Buckhead resident here. With summer coming up fast, just wanted to share a few things I've learned about keeping your home comfortable without the utility bill shock.
-
-Atlanta's humidity makes HVAC maintenance more important than most people realize — a dirty coil in June can add 20–30% to your cooling costs.
-
-Happy to answer any home cooling questions if anyone has them. We look out for each other here!`,
-      },
-      {
-        type: "value",
-        label: "Value Post",
-        compliance: "clean",
-        content: `🌡️ Atlanta Summer HVAC Checklist (before the real heat hits):
-
-✓ Replace air filters — pollen season clogs them faster than you think
-✓ Clear debris from your outdoor unit, especially after storms
-✓ Set your thermostat to 78°F when home, 85°F when away to balance comfort and cost
-✓ Listen for unusual sounds — rattling or squealing now means an expensive repair in August
-✓ Check that condensate drain line is clear (pour a cup of bleach down it)
-
-Starting the season right can save $300–$500 on your summer bills. Happy to answer any questions!`,
-      },
-      {
-        type: "referral",
-        label: "Referral",
-        compliance: "flagged",
-        complianceNote: "This group explicitly bans promotional posts and external links. Do not post referral links in this community. Consider using the Value Post template instead.",
-        content: `Looking for a reliable HVAC tech in Buckhead? I've been using TradeEngage to find vetted local contractors — homeowners who book through my link also get access to a rewards program for future referrals.
-
-[Your referral link: tradeengage.com/ref/user123?utm_source=facebook&utm_medium=group_post&utm_campaign=buckhead-neighbors]
-
-Feel free to DM me if you want a personal recommendation!`,
-      },
-    ],
-  },
-  {
-    id: "h6",
-    name: "r/Atlanta",
-    platform: "reddit",
-    type: "homeowner",
-    postingRules: "Broad topics. Self-promo gets downvoted.",
-    drafts: [
-      {
-        type: "introduction",
-        label: "Introduction",
-        compliance: "clean",
-        content: `Atlanta homeowner here (Decatur side). The amount of HVAC horror stories I've seen this summer got me thinking — what's everyone's strategy for vetting contractors?
-
-I've had three bad experiences in four years. Would genuinely love to hear what the r/Atlanta community uses to find reliable trades. Angi? Nextdoor recommendations? Word of mouth only?`,
-      },
-      {
-        type: "value",
-        label: "Value Post",
-        compliance: "clean",
-        content: `For Atlanta homeowners prepping for summer: your AC system is about to work harder than it has all year. A few things worth checking this week:
-
-**Filter** — if it's been more than 60 days, replace it. Pollen is brutal here.
-**Outdoor unit** — clear at least 2 feet of clearance around it.
-**Thermostat** — if it's more than 10 years old, a smart thermostat pays for itself in one Atlanta summer.
-**Unusual sounds** — address them now. Emergency HVAC calls in July cost 40% more on average.
-
-Happy to answer any questions in the comments.`,
-      },
-      {
-        type: "referral",
-        label: "Referral",
-        compliance: "review",
-        complianceNote: "r/Atlanta allows contractor recommendations when they're genuine and contextual. Avoid leading with the referral link — post it as a comment reply instead of the main post body.",
-        content: `Been asked a few times via DM about how I find reliable HVAC contractors in Atlanta so sharing here.
-
-I've been using TradeEngage — it's a platform that vets local home service companies and lets homeowners earn rewards when they refer contractors to friends. The referral program actually pays out, which is rare.
-
-If you want to check it out: tradeengage.com/ref/user123?utm_source=reddit&utm_medium=group_post&utm_campaign=r-atlanta
-
-Not affiliated, just a genuinely happy user.`,
-      },
-    ],
+    type: "engagement",
+    label: "Engagement",
+    compliance: "review",
+    complianceNote: "Review the draft before posting to ensure it aligns with this community's tone and rules.",
+    content: `Draft generation is coming soon. Your engagement post will open a conversation relevant to this community — a question, poll, or discussion prompt that drives organic replies.`,
   },
 ];
+
+import type { GeneratedDrafts } from "@/lib/community-status";
+
+function applyStoredDrafts(stored: GeneratedDrafts): Draft[] {
+  return PLACEHOLDER_DRAFTS.map((d) => ({
+    ...d,
+    content: stored[d.type as keyof Pick<GeneratedDrafts, "introduction" | "value" | "engagement">] ?? d.content,
+  }));
+}
 
 function PlatformIcon({ platform }: { platform: Platform }) {
   if (platform === "facebook") {
@@ -213,89 +114,386 @@ function PlatformIcon({ platform }: { platform: Platform }) {
   );
 }
 
-function ComplianceBanner({ status, note }: { status: ComplianceStatus; note?: string }) {
-  if (status === "clean") {
-    return (
-      <div className="flex items-center gap-2 px-4 py-2.5 bg-green-50 border border-green-200 rounded-lg">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-500 shrink-0">
-          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
-        </svg>
-        <span className="text-xs font-medium text-green-700">Compliant — ready to post</span>
-      </div>
-    );
-  }
-  if (status === "review") {
-    return (
-      <div className="flex items-start gap-2 px-4 py-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-yellow-500 shrink-0 mt-0.5">
-          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-          <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-        </svg>
-        <div>
-          <p className="text-xs font-medium text-yellow-700">Review recommended</p>
-          {note && <p className="text-xs text-yellow-600 mt-0.5">{note}</p>}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="flex items-start gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-red-500 shrink-0 mt-0.5">
-        <circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" />
-      </svg>
-      <div>
-        <p className="text-xs font-medium text-red-700">Flagged — do not post as-is</p>
-        {note && <p className="text-xs text-red-600 mt-0.5">{note}</p>}
-      </div>
-    </div>
-  );
+function ComplianceBanner(_: { status: ComplianceStatus; note?: string }) {
+  return null;
 }
 
 export default function DraftsPage() {
-  const [activeCommunityId, setActiveCommunityId] = useState(SELECTED_COMMUNITIES[0].id);
-  const [activeDraftType, setActiveDraftType] = useState<PostType>("introduction");
-  const [copied, setCopied] = useState(false);
-  const [regenerating, setRegenerating] = useState(false);
+  const [communities, setCommunities] = useState<DraftCommunity[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [userProfile, setUserProfile] = useState<import("@/lib/communities-loader").UserProfile | null>(null);
+  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<ActiveTab>("compose");
+  const [copiedType, setCopiedType] = useState<PostType | null>(null);
+  const [_regeneratingType, _setRegeneratingType] = useState<PostType | null>(null);
+  const [modifyTarget, setModifyTarget] = useState<{ type: PostType; content: string } | null>(null);
+  const [modifyPrompt, setModifyPrompt] = useState("");
+  const [modifying, setModifying] = useState(false);
+  const [modifyError, setModifyError] = useState<string | null>(null);
+  const modifyInputRef = useRef<HTMLTextAreaElement>(null);
+  const [communityHistory, setCommunityHistory] = useState<HistoryItem[]>([]);
+  const [historyCopiedId, setHistoryCopiedId] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState("");
+  const [tone, setTone] = useState<"professional" | "friendly" | "casual">("professional");
+  const [includeReferral, setIncludeReferral] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [postsMap, setPostsMap] = useState<Record<string, InspirationPost[]>>({});
+  const [postsLoading, setPostsLoading] = useState(false);
+  const [postsError, setPostsError] = useState<string | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const community = SELECTED_COMMUNITIES.find((c) => c.id === activeCommunityId)!;
-  const draft = community.drafts.find((d) => d.type === activeDraftType) ?? community.drafts[0];
+  useEffect(() => {
+    (async () => {
+      const [statuses, fbGroupsRaw, subredditsRaw, profile] = await Promise.all([
+        loadStatuses(),
+        fetch("/api/admin/fb-groups").then((r) => r.json() as Promise<import("@/lib/extract-groups").FBGroup[]>),
+        fetch("/api/admin/subreddits").then((r) => r.json() as Promise<import("@/lib/extract-subreddits").Subreddit[]>),
+        loadProfile(),
+      ]);
 
-  function handleTabChange(type: PostType) {
-    setActiveDraftType(type);
-    setCopied(false);
+      const active = statuses.filter((s) => s.status === "joined" || s.status === "pending");
+      const fbMap = new Map(fbGroupsRaw.map((g) => [`fb-${g.id}`, g]));
+      const redditMap = new Map(subredditsRaw.map((s) => [`reddit-${s.name}`, s]));
+
+      const resolved: DraftCommunity[] = active.flatMap((s) => {
+        const fb = fbMap.get(s.communityId);
+        if (fb) {
+          return [{
+            id: s.communityId,
+            name: fb.name,
+            description: fb.snippet ?? "",
+            platform: "facebook" as Platform,
+            type: fb.intent,
+            status: s.status as "joined" | "pending",
+            url: fb.url,
+            drafts: s.drafts ? applyStoredDrafts(s.drafts) : PLACEHOLDER_DRAFTS,
+            hasGeneratedDrafts: !!s.drafts,
+          }];
+        }
+        const reddit = redditMap.get(s.communityId);
+        if (reddit) {
+          return [{
+            id: s.communityId,
+            name: `r/${reddit.name}`,
+            description: reddit.description ?? "",
+            platform: "reddit" as Platform,
+            type: reddit.intent,
+            status: s.status as "joined" | "pending",
+            url: reddit.url,
+            drafts: s.drafts ? applyStoredDrafts(s.drafts) : PLACEHOLDER_DRAFTS,
+            hasGeneratedDrafts: !!s.drafts,
+          }];
+        }
+        return [];
+      });
+
+      setUserProfile(profile);
+      setCommunities(resolved);
+      if (resolved.length > 0) {
+        const firstId = resolved[0].id;
+        setActiveCommunityId(firstId);
+        setCommunityHistory(await getHistoryForCommunity(firstId));
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  const community = communities.find((c) => c.id === activeCommunityId) ?? null;
+  const currentPosts: InspirationPost[] | null = community ? (postsMap[community.id] ?? null) : null;
+
+  function handleTabChange(type: ActiveTab) {
+    setActiveTab(type);
   }
 
   function handleCommunityChange(id: string) {
-    const c = SELECTED_COMMUNITIES.find((c) => c.id === id)!;
     setActiveCommunityId(id);
-    setActiveDraftType(c.drafts[0].type);
-    setCopied(false);
+    setActiveTab("compose");
+    setCopiedType(null);
+    setPostsError(null);
+    getHistoryForCommunity(id).then(setCommunityHistory);
   }
 
-  async function handleCopy() {
-    await navigator.clipboard.writeText(draft.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  useEffect(() => {
+    if (!activeCommunityId || !loaded) return;
+
+    const comm = communities.find((c) => c.id === activeCommunityId);
+    if (!comm) return;
+
+    setPostsError(null);
+    setPostsLoading(false);
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+
+    const isCancelled = { value: false };
+    const commId = comm.id;
+    const isFacebook = comm.platform === "facebook";
+    const rawId = isFacebook
+      ? comm.id.replace(/^fb-/, "")
+      : comm.id.replace(/^reddit-/, "");
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const savePosts = (posts: InspirationPost[]) =>
+      isFacebook ? savePostsForGroup(rawId, posts as any) : savePostsForSubreddit(rawId, posts as any);
+
+    const pollUrl = (runId: string) =>
+      isFacebook ? `/api/admin/fb-group-posts?runId=${runId}` : `/api/admin/reddit-posts?runId=${runId}`;
+
+    const startUrl = isFacebook ? "/api/admin/fb-group-posts" : "/api/admin/reddit-posts";
+    const startBody = isFacebook
+      ? JSON.stringify({ groupUrl: comm.url })
+      : JSON.stringify({ subredditUrl: comm.url });
+
+    function schedulePoll(runId: string, delayMs: number) {
+      pollTimerRef.current = setTimeout(async () => {
+        if (isCancelled.value) return;
+        try {
+          const res = await fetch(pollUrl(runId));
+          const data = await res.json() as { status: string; posts?: InspirationPost[]; error?: string };
+          if (isCancelled.value) return;
+
+          if (data.status === "running") {
+            schedulePoll(runId, 5_000);
+          } else if (data.status === "succeeded" && data.posts) {
+            void savePosts(data.posts);
+            void (isFacebook ? clearRunForGroup(rawId) : clearRunForSubreddit(rawId));
+            setPostsMap((prev) => ({ ...prev, [commId]: data.posts! }));
+            setPostsLoading(false);
+          } else {
+            void (isFacebook ? clearRunForGroup(rawId) : clearRunForSubreddit(rawId));
+            setPostsError(data.error ?? "Run failed");
+            setPostsLoading(false);
+          }
+        } catch (e) {
+          if (!isCancelled.value) {
+            setPostsError(e instanceof Error ? e.message : String(e));
+            setPostsLoading(false);
+          }
+        }
+      }, delayMs);
+    }
+
+    (async () => {
+      // Already have posts — serve from cache
+      const existingPosts = await (isFacebook ? getPostsForGroup(rawId) : getPostsForSubreddit(rawId));
+      if (isCancelled.value) return;
+      if (existingPosts) {
+        setPostsMap((prev) => ({ ...prev, [commId]: existingPosts as unknown as InspirationPost[] }));
+        return;
+      }
+
+      setPostsLoading(true);
+
+      // Resume polling if a run is already in-flight
+      const pendingRun = await (isFacebook ? getRunForGroup(rawId) : getRunForSubreddit(rawId));
+      if (isCancelled.value) return;
+      if (pendingRun) {
+        schedulePoll(pendingRun.runId, 5_000);
+        return;
+      }
+
+      // Start a fresh run
+      try {
+        const res = await fetch(startUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: startBody,
+        });
+        const data = await res.json() as { runId?: string; datasetId?: string; error?: string };
+        if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
+        if (isCancelled.value) return;
+        void (isFacebook
+          ? saveRunForGroup(rawId, { runId: data.runId!, datasetId: data.datasetId!, startedAt: new Date().toISOString() })
+          : saveRunForSubreddit(rawId, { runId: data.runId!, datasetId: data.datasetId!, startedAt: new Date().toISOString() }));
+        schedulePoll(data.runId!, 10_000);
+      } catch (e) {
+        if (!isCancelled.value) {
+          setPostsError(e instanceof Error ? e.message : String(e));
+          setPostsLoading(false);
+        }
+      }
+    })();
+
+    return () => { isCancelled.value = true; if (pollTimerRef.current) clearTimeout(pollTimerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCommunityId, loaded]);
+
+  async function handleCopy(d: Draft) {
+    await navigator.clipboard.writeText(d.content);
+    setCopiedType(d.type);
+    setTimeout(() => setCopiedType(null), 2000);
   }
 
-  async function handleRegenerate() {
-    setRegenerating(true);
-    await new Promise((r) => setTimeout(r, 1200));
-    setRegenerating(false);
+  function handleMarkPost(type: PostType, content: string, status: PostStatus) {
+    if (!community) return;
+    upsertHistoryItem(community.id, { type, content, status }).then(() =>
+      getHistoryForCommunity(community.id).then(setCommunityHistory)
+    );
+  }
+
+  async function handleHistoryCopy(item: HistoryItem) {
+    await navigator.clipboard.writeText(item.content);
+    setHistoryCopiedId(item.id);
+    setTimeout(() => setHistoryCopiedId(null), 2000);
+  }
+
+  function buildUtmLink(baseLink: string, comm: DraftCommunity): string {
+    const slug = comm.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const base = baseLink.startsWith("http") ? baseLink : `https://${baseLink}`;
+    const url = new URL(base);
+    url.searchParams.set("utm_source", comm.platform);
+    url.searchParams.set("utm_medium", "social");
+    url.searchParams.set("utm_campaign", slug);
+    return url.toString();
+  }
+
+  async function handleGenerate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!prompt.trim() || generating || !community) return;
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      const referralLink =
+        includeReferral && userProfile?.referralLink
+          ? buildUtmLink(userProfile.referralLink, community)
+          : undefined;
+      const res = await fetch("/api/drafts/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          tone,
+          community: {
+            name: community.name,
+            description: community.description,
+            type: community.type,
+            platform: community.platform,
+          },
+          userProfile: userProfile ?? { trade: "contractor", location: "" },
+          inspirationPosts: currentPosts ?? [],
+          referralLink,
+        }),
+      });
+      const data = await res.json() as GenerateResponse & { error?: string };
+      if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
+      await saveDraftsForCommunity(community.id, data);
+      await clearHistoryForCommunity(community.id);
+      setCommunityHistory([]);
+      setCommunities((prev) =>
+        prev.map((c) =>
+          c.id !== community.id
+            ? c
+            : {
+                ...c,
+                hasGeneratedDrafts: true,
+                drafts: c.drafts.map((d) => ({
+                  ...d,
+                  content: data[d.type as keyof GenerateResponse] ?? d.content,
+                })),
+              }
+        )
+      );
+    } catch (err) {
+      setGenerateError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  function openModify(type: PostType, content: string) {
+    setModifyTarget({ type, content });
+    setModifyPrompt("");
+    setModifyError(null);
+    setTimeout(() => modifyInputRef.current?.focus(), 50);
+  }
+
+  function closeModify() {
+    setModifyTarget(null);
+    setModifyPrompt("");
+    setModifyError(null);
+  }
+
+  const handleModifySubmit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modifyPrompt.trim() || modifying || !modifyTarget || !community) return;
+    setModifying(true);
+    setModifyError(null);
+    try {
+      const res = await fetch("/api/drafts/modify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postType: modifyTarget.type,
+          currentContent: modifyTarget.content,
+          instruction: modifyPrompt,
+          community: { name: community.name, platform: community.platform, type: community.type },
+          userProfile: userProfile ?? { trade: "contractor", location: "" },
+        }),
+      });
+      const data = await res.json() as ModifyResponse & { error?: string };
+      if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setCommunities((prev) =>
+        prev.map((c) =>
+          c.id !== community.id
+            ? c
+            : {
+                ...c,
+                drafts: c.drafts.map((d) =>
+                  d.type !== modifyTarget.type ? d : { ...d, content: data.content }
+                ),
+              }
+        )
+      );
+      const updated = community.drafts.map((d) =>
+        d.type !== modifyTarget.type ? d : { ...d, content: data.content }
+      );
+      await saveDraftsForCommunity(community.id, {
+        introduction: updated.find((d) => d.type === "introduction")!.content,
+        value: updated.find((d) => d.type === "value")!.content,
+        engagement: updated.find((d) => d.type === "engagement")!.content,
+      });
+      closeModify();
+    } catch (err) {
+      setModifyError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setModifying(false);
+    }
+  }, [modifyPrompt, modifying, modifyTarget, community]);
+
+  // Empty state
+  if (loaded && communities.length === 0) {
+    return (
+      <div className="p-8 max-w-3xl">
+        <h1 className="text-2xl font-semibold text-gray-900 mb-1">Post Drafts</h1>
+        <p className="text-sm text-gray-500 mb-10">AI-generated posts for every community you've joined.</p>
+        <div className="text-center py-20 bg-white rounded-xl border border-gray-200">
+          <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-4">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400">
+              <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+            </svg>
+          </div>
+          <p className="text-sm font-medium text-gray-700">No joined communities yet</p>
+          <p className="text-xs text-gray-400 mt-1 mb-5">Join communities first — drafts will be generated for each one.</p>
+          <Link
+            href="/communities"
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Browse Communities →
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="flex h-full">
-      {/* Left panel — community list */}
+      {/* Left panel */}
       <aside className="w-64 shrink-0 border-r border-gray-200 bg-white flex flex-col">
         <div className="px-4 py-4 border-b border-gray-100">
-          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Selected Communities</h2>
-          <p className="text-xs text-gray-400 mt-0.5">{SELECTED_COMMUNITIES.length} communities</p>
+          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Joined Communities</h2>
+          <p className="text-xs text-gray-400 mt-0.5">{communities.length} {communities.length === 1 ? "community" : "communities"}</p>
         </div>
         <nav className="flex-1 overflow-y-auto py-2">
-          {SELECTED_COMMUNITIES.map((c) => {
-            const flaggedCount = c.drafts.filter((d) => d.compliance === "flagged").length;
-            const reviewCount = c.drafts.filter((d) => d.compliance === "review").length;
+          {communities.map((c) => {
             const isActive = c.id === activeCommunityId;
             return (
               <button
@@ -307,19 +505,14 @@ export default function DraftsPage() {
               >
                 <PlatformIcon platform={c.platform} />
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-medium truncate ${isActive ? "text-blue-700" : "text-gray-800"}`}>
+                  <p className={`text-sm font-medium line-clamp-2 leading-snug ${isActive ? "text-blue-700" : "text-gray-800"}`}>
                     {c.name}
                   </p>
                   <p className="text-xs text-gray-400 mt-0.5 capitalize">{c.type}</p>
                 </div>
-                {flaggedCount > 0 && (
-                  <span className="w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
-                    {flaggedCount}
-                  </span>
-                )}
-                {flaggedCount === 0 && reviewCount > 0 && (
-                  <span className="w-4 h-4 rounded-full bg-yellow-400 text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
-                    {reviewCount}
+                {c.status === "pending" && (
+                  <span className="shrink-0 mt-0.5 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded">
+                    Pending
                   </span>
                 )}
               </button>
@@ -328,130 +521,564 @@ export default function DraftsPage() {
         </nav>
       </aside>
 
-      {/* Right panel — draft workspace */}
-      <div className="flex-1 overflow-y-auto p-8">
-        {/* Community header */}
-        <div className="mb-6">
-          <div className="flex items-center gap-3 mb-1">
-            <PlatformIcon platform={community.platform} />
-            <h1 className="text-xl font-semibold text-gray-900">{community.name}</h1>
-            <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${
-              community.type === "contractor"
-                ? "bg-indigo-100 text-indigo-700"
-                : "bg-emerald-100 text-emerald-700"
-            }`}>
-              {community.type === "contractor" ? "Find Partners" : "Reach Homeowners"}
-            </span>
-          </div>
-          <p className="text-xs text-gray-400 ml-9">
-            <span className="font-medium text-gray-500">Posting rules:</span> {community.postingRules}
-          </p>
-        </div>
-
-        {/* Tab bar */}
-        <div className="flex gap-1 border-b border-gray-200 mb-6">
-          {community.drafts.map((d) => {
-            const isActive = d.type === (draft?.type ?? community.drafts[0].type);
-            const dotColor =
-              d.compliance === "flagged" ? "bg-red-500" :
-              d.compliance === "review" ? "bg-yellow-400" : "bg-green-500";
-            return (
-              <button
-                key={d.type}
-                onClick={() => handleTabChange(d.type)}
-                className={`relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                  isActive
-                    ? "text-blue-700 border-blue-600"
-                    : "text-gray-500 border-transparent hover:text-gray-700 hover:border-gray-300"
-                }`}
-              >
-                {d.label}
-                <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Compliance banner */}
-        <div className="mb-4">
-          <ComplianceBanner status={draft.compliance} note={draft.complianceNote} />
-        </div>
-
-        {/* Draft content */}
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Draft</span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleRegenerate}
-                disabled={regenerating}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
-              >
-                {regenerating ? (
-                  <>
-                    <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                    </svg>
-                    Regenerating...
-                  </>
-                ) : (
-                  <>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
-                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                    </svg>
-                    Regenerate
-                  </>
-                )}
-              </button>
-              <button
-                onClick={handleCopy}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                  copied
-                    ? "bg-green-100 text-green-700"
-                    : "bg-blue-600 text-white hover:bg-blue-700"
-                }`}
-              >
-                {copied ? (
-                  <>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    Copied!
-                  </>
-                ) : (
-                  <>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                    </svg>
-                    Copy to Clipboard
-                  </>
-                )}
-              </button>
+      {/* Right panel */}
+      {community && (
+        <div className="flex-1 overflow-y-auto p-8">
+          {/* Community header */}
+          <div className="mb-6">
+            <div className="flex items-center gap-3">
+              <PlatformIcon platform={community.platform} />
+              <div>
+                <h1 className="text-xl font-semibold text-gray-900">{community.name}</h1>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${
+                    community.type === "contractor"
+                      ? "bg-indigo-100 text-indigo-700"
+                      : "bg-emerald-100 text-emerald-700"
+                  }`}>
+                    {community.type === "contractor" ? "Find Partners" : "Reach Homeowners"}
+                  </span>
+                  {community.status === "pending" && (
+                    <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                      Request Pending
+                    </span>
+                  )}
+                </div>
+                <a
+                  href={community.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 mt-2 text-xs font-medium text-gray-500 hover:text-blue-600 transition-colors"
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="7" y1="17" x2="17" y2="7" /><polyline points="7 7 17 7 17 17" />
+                  </svg>
+                  Open {community.platform === "reddit" ? "subreddit" : "group"}
+                </a>
+              </div>
             </div>
           </div>
-          <div className="px-5 py-5">
-            <pre className="text-sm text-gray-800 whitespace-pre-wrap font-sans leading-relaxed">
-              {regenerating ? (
-                <span className="text-gray-400 italic">Generating a new draft...</span>
-              ) : (
-                draft.content
+
+          {/* Tab bar */}
+          <div className="flex gap-1 border-b border-gray-200 mb-6">
+            <button
+              onClick={() => handleTabChange("compose")}
+              className={`relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                activeTab === "compose"
+                  ? "text-blue-700 border-blue-600"
+                  : "text-gray-500 border-transparent hover:text-gray-700 hover:border-gray-300"
+              }`}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+              </svg>
+              Compose
+            </button>
+            <button
+              onClick={() => handleTabChange("history")}
+              className={`relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                activeTab === "history"
+                  ? "text-blue-700 border-blue-600"
+                  : "text-gray-500 border-transparent hover:text-gray-700 hover:border-gray-300"
+              }`}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+              </svg>
+              History
+            </button>
+            <button
+              onClick={() => handleTabChange("inspirations")}
+              className={`relative flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                activeTab === "inspirations"
+                  ? "text-blue-700 border-blue-600"
+                  : "text-gray-500 border-transparent hover:text-gray-700 hover:border-gray-300"
+              }`}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+              Inspirations
+              {postsLoading && (
+                <svg className="animate-spin ml-0.5" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                </svg>
               )}
-            </pre>
+              {currentPosts && !postsLoading && (
+                <span className="text-[10px] font-semibold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">
+                  {currentPosts.length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Compose tab — all 3 drafts stacked */}
+          {activeTab === "compose" && (
+            <div className="grid gap-6">
+
+              {/* Generate form */}
+              <form onSubmit={handleGenerate} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="px-5 py-4 border-b border-gray-100">
+                  <h3 className="text-sm font-semibold text-gray-800">Generate Posts</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Describe what you want to share and we'll draft all three post types.</p>
+                </div>
+                <div className="px-5 py-4 grid gap-4">
+                  {/* Prompt */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                      What do you want to post about?
+                    </label>
+                    <textarea
+                      value={prompt}
+                      onChange={(e) => setPrompt(e.target.value)}
+                      placeholder={`e.g. "Share tips on finding reliable subcontractors in ${community.type === "contractor" ? "your local area" : "home renovation projects"}"`}
+                      rows={3}
+                      className="w-full px-3 py-2.5 text-sm text-gray-800 placeholder-gray-400 bg-gray-50 border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                    />
+                  </div>
+
+                  {/* Tone */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-2">Tone</label>
+                    <div className="flex gap-2">
+                      {(["professional", "friendly", "casual"] as const).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setTone(t)}
+                          className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors capitalize ${
+                            tone === t
+                              ? "bg-blue-600 text-white border-blue-600"
+                              : "bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Referral link */}
+                  {(() => {
+                    if (!userProfile?.referralLink) return null;
+                    const utmLink = buildUtmLink(userProfile.referralLink, community);
+                    return (
+                      <label className="flex items-start gap-3 cursor-pointer group">
+                        <input
+                          type="checkbox"
+                          checked={includeReferral}
+                          onChange={(e) => setIncludeReferral(e.target.checked)}
+                          className="mt-0.5 w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-xs font-medium text-gray-700 group-hover:text-gray-900 transition-colors">
+                            Include my referral link in the posts
+                          </span>
+                          {includeReferral && (
+                            <p className="mt-1 text-[11px] text-gray-400 font-mono break-all leading-snug">
+                              {utmLink}
+                            </p>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })()}
+                </div>
+
+                {/* Footer */}
+                <div className="px-5 py-3.5 bg-gray-50 border-t border-gray-100 flex flex-col gap-2">
+                {generateError && (
+                  <p className="text-xs text-red-600 font-medium">{generateError}</p>
+                )}
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-gray-400">
+                    Generates Introduction, Value Post &amp; Engagement drafts
+                  </p>
+                  <button
+                    type="submit"
+                    disabled={!prompt.trim() || generating}
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {generating ? (
+                      <>
+                        <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                        </svg>
+                        Generating…
+                      </>
+                    ) : (
+                      <>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+                        </svg>
+                        Generate Posts
+                      </>
+                    )}
+                  </button>
+                </div>
+                </div>
+              </form>
+
+              {/* Draft cards */}
+              {!community.hasGeneratedDrafts && (
+                <div className="flex flex-col items-center justify-center py-12 text-center bg-gray-50 border border-dashed border-gray-200 rounded-xl">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-300 mb-3">
+                    <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                  </svg>
+                  <p className="text-sm font-medium text-gray-500">No drafts yet</p>
+                  <p className="text-xs text-gray-400 mt-1">Fill in the form above and click Generate Posts.</p>
+                </div>
+              )}
+              {community.hasGeneratedDrafts && community.drafts.map((d) => {
+                const isCopied = copiedType === d.type;
+                return (
+                  <div key={d.type}>
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3">{d.label}</h3>
+                    <div className="mb-3">
+                      <ComplianceBanner status={d.compliance} note={d.complianceNote} />
+                    </div>
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                      <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Draft</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => openModify(d.type, d.content)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                            </svg>
+                            Modify
+                          </button>
+                          <button
+                            onClick={() => handleCopy(d)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                              isCopied
+                                ? "bg-green-100 text-green-700"
+                                : "bg-blue-600 text-white hover:bg-blue-700"
+                            }`}
+                          >
+                            {isCopied ? (
+                              <>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                                Copied!
+                              </>
+                            ) : (
+                              <>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                </svg>
+                                Copy to Clipboard
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                      <div className="px-5 py-5">
+                        <pre className="text-sm text-gray-800 whitespace-pre-wrap font-sans leading-relaxed">
+                          {d.content}
+                        </pre>
+                      </div>
+
+                      {/* Posted? banner */}
+                      {(() => {
+                        const marked = communityHistory.find((h) => h.type === d.type);
+                        if (marked) {
+                          return (
+                            <div className={`px-5 py-3 border-t flex items-center justify-between ${
+                              marked.status === "posted"
+                                ? "bg-green-50 border-green-100"
+                                : "bg-amber-50 border-amber-100"
+                            }`}>
+                              <div className="flex items-center gap-2">
+                                {marked.status === "posted" ? (
+                                  <>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-500">
+                                      <polyline points="20 6 9 17 4 12"/>
+                                    </svg>
+                                    <span className="text-xs font-medium text-green-700">Posted</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+                                      <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                                    </svg>
+                                    <span className="text-xs font-medium text-amber-700">Pending Approval</span>
+                                  </>
+                                )}
+                              </div>
+                              <div className="flex gap-2">
+                                {marked.status !== "posted" && (
+                                  <button
+                                    onClick={() => handleMarkPost(d.type, d.content, "posted")}
+                                    className="text-xs font-medium text-green-600 hover:text-green-700 hover:underline"
+                                  >
+                                    Mark as Posted
+                                  </button>
+                                )}
+                                {marked.status !== "pending_approval" && (
+                                  <button
+                                    onClick={() => handleMarkPost(d.type, d.content, "pending_approval")}
+                                    className="text-xs font-medium text-amber-600 hover:text-amber-700 hover:underline"
+                                  >
+                                    Mark as Pending
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="px-5 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
+                            <span className="text-xs text-gray-500">Have you successfully posted this?</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleMarkPost(d.type, d.content, "pending_approval")}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors"
+                              >
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                                </svg>
+                                Pending Approval
+                              </button>
+                              <button
+                                onClick={() => handleMarkPost(d.type, d.content, "posted")}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors"
+                              >
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="20 6 9 17 4 12"/>
+                                </svg>
+                                Yes, Posted
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* History tab content */}
+          {activeTab === "history" && (
+            <>
+              {communityHistory.length === 0 ? (
+                <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
+                  <div className="w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-3">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400">
+                      <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                  </div>
+                  <p className="text-sm font-medium text-gray-700">No posts yet</p>
+                  <p className="text-xs text-gray-400 mt-1">Mark a draft as posted or pending and it will appear here.</p>
+                </div>
+              ) : (
+                <div className="grid gap-3">
+                  {communityHistory.map((item) => {
+                    const meta = POST_TYPE_META[item.type];
+                    const isCopied = historyCopiedId === item.id;
+                    const isPosted = item.status === "posted";
+                    return (
+                      <div key={item.id} className="bg-white border border-gray-200 rounded-xl overflow-hidden hover:border-gray-300 transition-colors">
+                        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${meta.color}`}>
+                              {meta.label}
+                            </span>
+                            <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${
+                              isPosted
+                                ? "bg-green-100 text-green-700"
+                                : "bg-amber-100 text-amber-700"
+                            }`}>
+                              {isPosted ? "Posted" : "Pending Approval"}
+                            </span>
+                            <span className="text-xs text-gray-400">
+                              {new Date(item.postedAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => handleHistoryCopy(item)}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg transition-colors ${
+                              isCopied
+                                ? "bg-green-100 text-green-700"
+                                : "text-gray-500 hover:bg-gray-100"
+                            }`}
+                          >
+                            {isCopied ? (
+                              <>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="20 6 9 17 4 12"/>
+                                </svg>
+                                Copied
+                              </>
+                            ) : (
+                              <>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                </svg>
+                                Copy
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        <div className="px-4 py-3.5">
+                          <p className="text-sm text-gray-800 leading-relaxed line-clamp-4">
+                            {item.content}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Inspirations tab content */}
+          {activeTab === "inspirations" && (
+            <>
+              {postsLoading && (
+                <div className="flex items-center gap-2.5 px-4 py-4 bg-blue-50 border border-blue-100 rounded-xl text-sm text-blue-600">
+                  <svg className="animate-spin shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  </svg>
+                  Post Inspirations Loading…
+                </div>
+              )}
+              {postsError && !postsLoading && (
+                <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                  {postsError}
+                </div>
+              )}
+              {currentPosts && !postsLoading && (
+                <div className="grid gap-3">
+                  {currentPosts.map((post) => (
+                    <div key={post.id} className="bg-white border border-gray-200 rounded-xl px-4 py-3.5 hover:border-gray-300 transition-colors">
+                      {post.title && (
+                        <p className="text-sm font-semibold text-gray-900 leading-snug mb-1 line-clamp-2">
+                          {post.title}
+                        </p>
+                      )}
+                      <p className="text-sm text-gray-800 leading-relaxed line-clamp-3 mb-2.5">
+                        {post.text || <span className="text-gray-400 italic">No text</span>}
+                      </p>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3 text-xs text-gray-400">
+                          <span className="font-medium text-gray-500">{post.authorName}</span>
+                          {post.time && (
+                            <>
+                              <span>·</span>
+                              <span>{new Date(post.time).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+                            </>
+                          )}
+                          <span>·</span>
+                          <span className="inline-flex items-center gap-1">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+                            {post.likesCount}
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                            {post.commentsCount}
+                          </span>
+                        </div>
+                        <a href={post.url} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-blue-600 hover:underline shrink-0">
+                          Open →
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Modify modal */}
+      {modifyTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) closeModify(); }}
+        >
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Modify Draft</h3>
+                <p className="text-xs text-gray-400 mt-0.5 capitalize">{POST_TYPE_META[modifyTarget.type].label}</p>
+              </div>
+              <button
+                onClick={closeModify}
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleModifySubmit}>
+              <div className="px-5 py-4">
+                <label className="block text-xs font-medium text-gray-600 mb-2">
+                  What would you like to change?
+                </label>
+                <textarea
+                  ref={modifyInputRef}
+                  value={modifyPrompt}
+                  onChange={(e) => setModifyPrompt(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Escape") closeModify(); }}
+                  placeholder='e.g. "Make it shorter" or "Add a specific example about storm damage" or "Change the tone to be more casual"'
+                  rows={4}
+                  className="w-full px-3 py-2.5 text-sm text-gray-800 placeholder-gray-400 bg-gray-50 border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                />
+                {modifyError && (
+                  <p className="mt-2 text-xs text-red-600 font-medium">{modifyError}</p>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-5 py-3.5 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeModify}
+                  className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!modifyPrompt.trim() || modifying}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {modifying ? (
+                    <>
+                      <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                      </svg>
+                      Applying…
+                    </>
+                  ) : (
+                    <>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
+                      Apply
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
-
-        {/* UTM link preview — only for homeowner referral drafts */}
-        {community.type === "homeowner" && draft.type === "referral" && (
-          <div className="mt-4 bg-gray-50 rounded-xl border border-gray-200 px-5 py-4">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">UTM-Tagged Referral Link</p>
-            <code className="text-xs text-blue-700 break-all">
-              tradeengage.com/ref/user123?utm_source={community.platform}&amp;utm_medium=group_post&amp;utm_campaign={community.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}
-            </code>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }

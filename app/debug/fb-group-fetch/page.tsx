@@ -1,28 +1,51 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import type { FBGroupFetchResponse, FBGroupResult } from "@/app/api/debug/fb-group-fetch/route";
-import { extractUniqueGroups, mergeWithStored, loadFromStorage, type FBGroup, type MergeStats } from "@/lib/extract-groups";
+import { extractUniqueGroups, mergeWithStored, type FBGroup, type MergeStats } from "@/lib/extract-groups";
 
-const STORAGE_KEY = "fb_groups";
+const DEBUG_KEY = "debug_fb_fetch_last";
 
 const TRADES = ["HVAC", "Plumbing", "Electrical", "Roofing", "Cleaning", "Landscaping"];
 const LOCATIONS = ["Atlanta, GA"];
+
+interface SavedFetch {
+  trade: string;
+  location: string;
+  fetchedAt: string;
+  response: FBGroupFetchResponse;
+}
 
 export default function FBGroupFetchPage() {
   const [trade, setTrade] = useState("HVAC");
   const [location, setLocation] = useState("Atlanta, GA");
   const [loading, setLoading] = useState(false);
+  const [savedFetch, setSavedFetch] = useState<SavedFetch | null>(null);
   const [response, setResponse] = useState<FBGroupFetchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "contractor" | "homeowner">("all");
   const [mergeStats, setMergeStats] = useState<MergeStats | null>(null);
+  const [expandedRow, setExpandedRow] = useState<number | null>(null);
+
+  useEffect(() => {
+    const raw = localStorage.getItem(DEBUG_KEY);
+    if (raw) {
+      try {
+        const saved = JSON.parse(raw) as SavedFetch;
+        setSavedFetch(saved);
+        setResponse(saved.response);
+        setTrade(saved.trade);
+        setLocation(saved.location);
+      } catch {}
+    }
+  }, []);
 
   async function run() {
     setLoading(true);
     setError(null);
     setResponse(null);
     setMergeStats(null);
+    setExpandedRow(null);
 
     try {
       const res = await fetch("/api/debug/fb-group-fetch", {
@@ -30,15 +53,22 @@ export default function FBGroupFetchPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ trade, location }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Request failed");
+      const data: FBGroupFetchResponse = await res.json();
+      if (!res.ok) throw new Error((data as unknown as { error: string }).error ?? "Request failed");
+
+      const saved: SavedFetch = { trade, location, fetchedAt: new Date().toISOString(), response: data };
+      localStorage.setItem(DEBUG_KEY, JSON.stringify(saved));
+      setSavedFetch(saved);
       setResponse(data);
 
-      // Extract unique groups, cross-check against storage, merge
       const incoming = extractUniqueGroups(data.results, trade, location);
-      const existing: FBGroup[] = loadFromStorage(localStorage.getItem(STORAGE_KEY) ?? "[]");
+      const existing: FBGroup[] = await fetch("/api/admin/fb-groups").then((r) => r.json());
       const { groups: merged, stats } = mergeWithStored(existing, incoming, trade, location);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      await fetch("/api/admin/fb-groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(merged),
+      });
       setMergeStats(stats);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -70,52 +100,26 @@ export default function FBGroupFetchPage() {
       <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
         <div className="flex items-end gap-4">
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
-              Trade
-            </label>
-            <select
-              value={trade}
-              onChange={(e) => setTrade(e.target.value)}
-              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Trade</label>
+            <select value={trade} onChange={(e) => setTrade(e.target.value)} className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
               {TRADES.map((t) => <option key={t}>{t}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
-              Location
-            </label>
-            <select
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Location</label>
+            <select value={location} onChange={(e) => setLocation(e.target.value)} className="px-3 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
               {LOCATIONS.map((l) => <option key={l}>{l}</option>)}
             </select>
           </div>
           <button
             onClick={run}
             disabled={loading}
-            className={`inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold rounded-lg transition-colors ${
-              loading
-                ? "bg-blue-400 text-white cursor-not-allowed"
-                : "bg-blue-600 text-white hover:bg-blue-700"
-            }`}
+            className={`inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold rounded-lg transition-colors ${loading ? "bg-blue-400 text-white cursor-not-allowed" : "bg-blue-600 text-white hover:bg-blue-700"}`}
           >
             {loading ? (
-              <>
-                <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
-                Running...
-              </>
+              <><svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>Running...</>
             ) : (
-              <>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="5 3 19 12 5 21 5 3" />
-                </svg>
-                Run
-              </>
+              <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" /></svg>Run</>
             )}
           </button>
         </div>
@@ -134,6 +138,18 @@ export default function FBGroupFetchPage() {
       {/* Results */}
       {response && (
         <>
+          {/* Last fetch banner */}
+          {savedFetch && (
+            <div className="flex items-center gap-2 px-4 py-2 mb-4 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+              </svg>
+              Last fetch: <span className="font-medium text-gray-700">{savedFetch.trade} · {savedFetch.location}</span>
+              <span className="mx-1">·</span>
+              {new Date(savedFetch.fetchedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </div>
+          )}
+
           {/* Merge stats banner */}
           {mergeStats !== null && (
             <div className="flex items-center justify-between px-4 py-3 mb-4 bg-green-50 border border-green-200 rounded-xl">
@@ -144,28 +160,19 @@ export default function FBGroupFetchPage() {
                 <span>Storage updated for <span className="font-semibold">{trade} · {location}</span></span>
               </div>
               <div className="flex items-center gap-4 text-xs font-medium">
-                <span className="text-green-700">
-                  <span className="font-bold">{mergeStats.added}</span> new
-                </span>
-                <span className="text-blue-700">
-                  <span className="font-bold">{mergeStats.updated}</span> updated
-                </span>
-                <span className="text-gray-500">
-                  <span className="font-bold">{mergeStats.unchanged}</span> unchanged
-                </span>
-                <a href="/admin/fb-groups" className="text-blue-600 underline font-medium">
-                  View in Admin →
-                </a>
+                <span className="text-green-700"><span className="font-bold">{mergeStats.added}</span> new</span>
+                <span className="text-blue-700"><span className="font-bold">{mergeStats.updated}</span> updated</span>
+                <span className="text-gray-500"><span className="font-bold">{mergeStats.unchanged}</span> unchanged</span>
+                <a href="/admin/fb-groups" className="text-blue-600 underline font-medium">View in Admin →</a>
               </div>
             </div>
           )}
 
-          {/* Summary */}
+          {/* Summary + filter */}
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-4">
               <p className="text-sm text-gray-600">
-                <span className="font-semibold text-gray-900">{response.totalFound}</span> groups found
-                across <span className="font-semibold text-gray-900">{response.queriesRun}</span> queries
+                <span className="font-semibold text-gray-900">{response.totalFound}</span> groups found across <span className="font-semibold text-gray-900">{response.queriesRun}</span> queries
               </p>
               {response.errors.length > 0 && (
                 <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
@@ -173,19 +180,9 @@ export default function FBGroupFetchPage() {
                 </span>
               )}
             </div>
-
-            {/* Intent filter */}
             <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1 gap-0.5">
               {(["all", "contractor", "homeowner"] as const).map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium capitalize transition-colors ${
-                    filter === f
-                      ? "bg-white text-gray-900 shadow-sm border border-gray-200"
-                      : "text-gray-500 hover:text-gray-700"
-                  }`}
-                >
+                <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1.5 rounded-md text-xs font-medium capitalize transition-colors ${filter === f ? "bg-white text-gray-900 shadow-sm border border-gray-200" : "text-gray-500 hover:text-gray-700"}`}>
                   {f === "all" ? `All (${response.totalFound})` : `${f.charAt(0).toUpperCase() + f.slice(1)} (${response.results.filter(r => r.intent === f).length})`}
                 </button>
               ))}
@@ -200,45 +197,52 @@ export default function FBGroupFetchPage() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Group</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Intent</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Query Used</th>
-                  <th className="w-16 px-4 py-3" />
+                  <th className="w-24 px-4 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filtered.map((r, i) => (
-                  <tr key={i} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3.5">
-                      <p className="font-medium text-gray-900">{r.title}</p>
-                      <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{r.snippet}</p>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
-                        r.intent === "contractor"
-                          ? "bg-indigo-100 text-indigo-700"
-                          : "bg-emerald-100 text-emerald-700"
-                      }`}>
-                        {r.intent}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <code className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                        {r.queryUsed}
-                      </code>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <a
-                        href={r.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs font-medium text-blue-600 hover:underline"
-                      >
-                        Open →
-                      </a>
-                    </td>
-                  </tr>
+                  <React.Fragment key={i}>
+                    <tr className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3.5">
+                        <p className="font-medium text-gray-900">{r.title}</p>
+                        <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{r.snippet}</p>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${r.intent === "contractor" ? "bg-indigo-100 text-indigo-700" : "bg-emerald-100 text-emerald-700"}`}>
+                          {r.intent}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <code className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{r.queryUsed}</code>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-2 justify-end">
+                          <button
+                            onClick={() => setExpandedRow(expandedRow === i ? null : i)}
+                            className={`text-xs font-mono font-medium px-2 py-1 rounded border transition-colors ${expandedRow === i ? "bg-gray-800 text-white border-gray-800" : "text-gray-500 border-gray-200 hover:bg-gray-100"}`}
+                          >
+                            {"{ }"}
+                          </button>
+                          <a href={r.url} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-blue-600 hover:underline">
+                            Open →
+                          </a>
+                        </div>
+                      </td>
+                    </tr>
+                    {expandedRow === i && (
+                      <tr className="bg-gray-950">
+                        <td colSpan={4} className="px-4 py-3">
+                          <pre className="text-xs font-mono text-green-400 whitespace-pre-wrap break-words leading-relaxed">
+                            {JSON.stringify(r, null, 2)}
+                          </pre>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
-
             {filtered.length === 0 && (
               <div className="text-center py-10 text-sm text-gray-400">No results for this filter.</div>
             )}

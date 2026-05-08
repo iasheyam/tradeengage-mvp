@@ -5,6 +5,12 @@ export interface FBGroup {
   name: string;
   url: string;
   snippet: string;
+  members: number;
+  weeklyPostFrequency: number;
+  privacy: string | null;
+  location: string | null;
+  hasQuestions: boolean | null;
+  lastEnrichedAt: string | null;
   intent: "contractor" | "homeowner";
   trades: string[];
   locations: string[];
@@ -30,6 +36,12 @@ export function migrateGroup(g: Partial<FBGroup> & { id: string }): FBGroup {
     name: g.name ?? "",
     url: g.url ?? normalizeGroupUrl(g.id),
     snippet: g.snippet ?? "",
+    members: g.members ?? 0,
+    weeklyPostFrequency: g.weeklyPostFrequency ?? 0,
+    privacy: g.privacy ?? null,
+    location: g.location ?? null,
+    hasQuestions: g.hasQuestions ?? null,
+    lastEnrichedAt: g.lastEnrichedAt ?? null,
     intent: g.intent ?? "homeowner",
     trades: g.trades ?? [],
     locations: g.locations ?? [],
@@ -72,6 +84,12 @@ export function extractUniqueGroups(
       name: result.title,
       url: normalizeGroupUrl(groupId),
       snippet: result.snippet,
+      members: 0,
+      weeklyPostFrequency: 0,
+      privacy: null,
+      location: null,
+      hasQuestions: null,
+      lastEnrichedAt: null,
       intent: result.intent,
       trades: [trade],
       locations: [location],

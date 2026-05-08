@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState, useEffect } from "react";
+import { loadProfile } from "@/lib/communities-loader";
 
 const navItems = [
   {
@@ -15,6 +17,10 @@ const navItems = [
         <path d="M16 3.13a4 4 0 0 1 0 7.75" />
       </svg>
     ),
+    children: [
+      { label: "Joined", href: "/communities/joined" },
+      { label: "Not Interested", href: "/communities/not-interested" },
+    ],
   },
   {
     label: "Post Drafts",
@@ -27,13 +33,14 @@ const navItems = [
     ),
   },
   {
-    label: "Export",
-    href: "/export",
+    label: "Analytics",
+    href: "/analytics",
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-        <polyline points="7 10 12 15 17 10" />
-        <line x1="12" y1="15" x2="12" y2="3" />
+        <line x1="18" y1="20" x2="18" y2="10" />
+        <line x1="12" y1="20" x2="12" y2="4" />
+        <line x1="6" y1="20" x2="6" y2="14" />
+        <line x1="2" y1="20" x2="22" y2="20" />
       </svg>
     ),
   },
@@ -41,6 +48,11 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [profile, setProfile] = useState<{ trade: string; location: string } | null>(null);
+
+  useEffect(() => {
+    loadProfile().then(setProfile);
+  }, []);
 
   return (
     <aside className="w-60 shrink-0 flex flex-col h-screen bg-white border-r border-gray-200">
@@ -51,37 +63,47 @@ export default function Sidebar() {
         </span>
       </div>
 
-      {/* Market badge */}
-      <div className="px-4 pt-4">
-        <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 rounded-lg">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500 shrink-0">
-            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
-            <circle cx="12" cy="10" r="3" />
-          </svg>
-          <span className="text-xs font-medium text-blue-700">Atlanta, GA</span>
-        </div>
-      </div>
-
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 overflow-y-auto">
         <div className="space-y-1">
           {navItems.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  isActive
-                    ? "bg-blue-50 text-blue-700"
-                    : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-                }`}
-              >
-                <span className={isActive ? "text-blue-600" : "text-gray-400"}>
-                  {item.icon}
-                </span>
-                {item.label}
-              </Link>
+              <div key={item.href}>
+                <Link
+                  href={item.href}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                    isActive
+                      ? "bg-blue-50 text-blue-700"
+                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                  }`}
+                >
+                  <span className={isActive ? "text-blue-600" : "text-gray-400"}>
+                    {item.icon}
+                  </span>
+                  {item.label}
+                </Link>
+                {"children" in item && isActive && (
+                  <div className="mt-0.5 ml-4 pl-3 border-l border-gray-200 space-y-0.5">
+                    {item.children!.map((child) => {
+                      const childActive = pathname === child.href;
+                      return (
+                        <Link
+                          key={child.href}
+                          href={child.href}
+                          className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            childActive
+                              ? "bg-blue-50 text-blue-700"
+                              : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                          }`}
+                        >
+                          {child.label}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
@@ -99,6 +121,16 @@ export default function Sidebar() {
                 icon: (
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />
+                  </svg>
+                ),
+              },
+              {
+                label: "Subreddits",
+                href: "/admin/subreddits",
+                icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M12 8v4l3 3" />
                   </svg>
                 ),
               },
@@ -137,6 +169,26 @@ export default function Sidebar() {
                 icon: (
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />
+                  </svg>
+                ),
+              },
+              {
+                label: "Reddit Fetch",
+                href: "/debug/reddit-fetch",
+                icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M12 8v4l3 3" />
+                  </svg>
+                ),
+              },
+              {
+                label: "FB Group Enrich",
+                href: "/debug/fb-group-enrich",
+                icon: (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
                   </svg>
                 ),
               },
@@ -180,7 +232,9 @@ export default function Sidebar() {
             <p className={`text-xs font-medium truncate ${pathname === "/settings" ? "text-blue-700" : "text-gray-900"}`}>
               TradeEngage User
             </p>
-            <p className="text-xs text-gray-500 truncate">HVAC · Atlanta</p>
+            <p className="text-xs text-gray-500 truncate">
+              {profile ? `${profile.trade} · ${profile.location.split(",")[0]}` : "HVAC · Atlanta"}
+            </p>
           </div>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 shrink-0">
             <circle cx="12" cy="12" r="3" />

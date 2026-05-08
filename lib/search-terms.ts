@@ -11,6 +11,7 @@ const CITY_NEIGHBORHOODS: Record<string, string[]> = {
   Atlanta: ["Buckhead", "Midtown Atlanta", "Sandy Springs", "Decatur", "Marietta", "Alpharetta", "Roswell", "Dunwoody"],
 };
 
+
 export interface SearchQuery {
   query: string;
   intent: "contractor" | "homeowner";
@@ -40,4 +41,23 @@ export function generateFBSearchQueries(trade: string, location: string): Search
   ];
 
   return [...contractorQueries, ...homeownerQueries];
+}
+
+export interface RedditSearchTerm {
+  query: string;
+  intent: "contractor" | "homeowner";
+}
+
+export function generateRedditQueries(trade: string, location: string): RedditSearchTerm[] {
+  const city = location.split(",")[0].trim();
+  const synonyms = TRADE_SYNONYMS[trade] ?? [trade.toLowerCase()];
+
+  return [
+    { query: `${synonyms[0]} contractors ${city}`, intent: "contractor" },
+    { query: `${synonyms[0]} professionals`, intent: "contractor" },
+    { query: `${city} ${synonyms[0]}`, intent: "contractor" },
+    { query: `${city} home improvement`, intent: "homeowner" },
+    { query: `${city} homeowners community`, intent: "homeowner" },
+    { query: `${city} neighborhood`, intent: "homeowner" },
+  ];
 }
