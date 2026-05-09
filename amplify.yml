@@ -6,6 +6,8 @@ frontend:
         - npm ci
     build:
       commands:
+        - env | grep -e SERPER_API_KEY -e ANTHROPIC_API_KEY -e APIFY_API_TOKEN -e SUPABASE_SERVICE_ROLE_KEY -e GOOGLE_SEARCH_API_KEY -e GOOGLE_SEARCH_ENGINE_ID >> .env.production
+        - env | grep -e NEXT_PUBLIC_ >> .env.production
         - npm run build
   artifacts:
     baseDirectory: .next
