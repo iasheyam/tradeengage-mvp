@@ -2,12 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { Subreddit } from "@/lib/extract-subreddits";
 
-// GET — return all stored subreddits
+// GET — return all stored subreddits (mapped to camelCase Subreddit shape)
 export async function GET() {
   const supabase = createServiceClient();
   const { data, error } = await supabase.from("subreddits").select("*").order("saved_at", { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data ?? []);
+
+  const subs = (data ?? []).map((r) => ({
+    name: r.name,
+    title: r.title,
+    description: r.description,
+    url: r.url,
+    subscribers: r.subscribers,
+    weeklyPostFrequency: r.weekly_post_frequency,
+    intent: r.intent,
+    trades: r.trades,
+    locations: r.locations,
+    savedAt: r.saved_at,
+  }));
+
+  return NextResponse.json(subs);
 }
 
 // POST — upsert a batch of subreddits (merge / replace)

@@ -171,11 +171,15 @@ export default function FBGroupsAdminPage() {
         };
       });
 
-      fetch("/api/admin/fb-groups", {
+      const saveRes = await fetch("/api/admin/fb-groups", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updated),
       });
+      if (!saveRes.ok) {
+        const saveErr = await saveRes.json().catch(() => ({ error: saveRes.statusText }));
+        throw new Error(`Save failed: ${saveErr.error ?? saveRes.status}`);
+      }
       setModalWorkingGroups(updated);
       setGroups([...updated]);
 
