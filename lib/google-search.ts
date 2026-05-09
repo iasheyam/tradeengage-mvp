@@ -8,7 +8,7 @@ export async function searchFacebookGroups(query: string): Promise<GoogleSearchR
   const apiKey = process.env.SERPER_API_KEY;
 
   if (!apiKey) {
-    throw new Error("SERPER_API_KEY must be set in .env.local");
+    throw new Error("SERPER_API_KEY is not configured");
   }
 
   const res = await fetch("https://google.serper.dev/search", {
