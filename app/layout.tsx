@@ -20,7 +20,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geist.variable} h-full`}>
+    <html lang="en" className={`${geist.variable} h-full`} style={{ colorScheme: "light" }}>
       <body className="h-full flex bg-gray-50 antialiased" suppressHydrationWarning>
         <AuthProvider>
           <Sidebar />
